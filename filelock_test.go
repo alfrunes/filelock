@@ -80,11 +80,12 @@ func doUnlock(t *testing.T, f *os.File) {
 
 func mustTempFile(t *testing.T) (f *os.File, remove func()) {
 	t.Helper()
+	tempDir := t.TempDir()
 
 	base := filepath.Base(t.Name())
-	f, err := os.CreateTemp("", base)
+	f, err := os.CreateTemp(tempDir, base)
 	if err != nil {
-		t.Fatalf(`os.CreateTemp("", %q) = %v`, base, err)
+		t.Fatalf(`os.CreateTemp(%s, %q) = %v`, tempDir, base, err)
 	}
 	t.Logf("fd %d = %s", f.Fd(), f.Name())
 
