@@ -36,11 +36,35 @@ func doLock(t *testing.T, f *os.File) {
 	}
 }
 
+func doTryLock(t *testing.T, f *os.File, shouldBlock bool) {
+	t.Helper()
+	err := TryLock(f)
+	t.Logf("TryLock(fd %d) = %v", f.Fd(), err)
+	if err != nil {
+		if shouldBlock && err == ErrWouldBlock {
+			return
+		}
+		t.Fail()
+	}
+}
+
 func doRLock(t *testing.T, f *os.File) {
 	t.Helper()
 	err := RLock(f)
 	t.Logf("RLock(fd %d) = %v", f.Fd(), err)
 	if err != nil {
+		t.Fail()
+	}
+}
+
+func doTryRLock(t *testing.T, f *os.File, shouldBlock bool) {
+	t.Helper()
+	err := TryRLock(f)
+	t.Logf("TryRLock(fd %d) = %v", f.Fd(), err)
+	if err != nil {
+		if shouldBlock && err == ErrWouldBlock {
+			return
+		}
 		t.Fail()
 	}
 }
@@ -134,6 +158,7 @@ func TestLockExcludesLock(t *testing.T) {
 	defer other.Close()
 
 	doLock(t, f)
+	doTryLock(t, other, true)
 	lockOther := mustBlock(t, "Lock", other)
 	doUnlock(t, f)
 	lockOther(t)
@@ -150,6 +175,7 @@ func TestLockExcludesRLock(t *testing.T) {
 	defer other.Close()
 
 	doLock(t, f)
+	doTryRLock(t, other, true)
 	rLockOther := mustBlock(t, "RLock", other)
 	doUnlock(t, f)
 	rLockOther(t)
@@ -172,16 +198,18 @@ func TestRLockExcludesOnlyLock(t *testing.T) {
 		// same inode through two different descriptors at the same time: when the
 		// first descriptor is closed, the second descriptor would still be open but
 		// silently unlocked. So a second RLock must block instead of proceeding.
+		doTryRLock(t, f2, true)
 		lockF2 := mustBlock(t, "RLock", f2)
 		doUnlock(t, f)
 		lockF2(t)
 	} else {
-		doRLock(t, f2)
+		doTryRLock(t, f2, false)
 		doUnlockTF = true
 	}
 
 	other := mustOpen(t, f.Name())
 	defer other.Close()
+	doTryLock(t, other, true)
 	lockOther := mustBlock(t, "Lock", other)
 
 	doUnlock(t, f2)
