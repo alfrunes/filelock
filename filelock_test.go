@@ -4,42 +4,39 @@
 
 //go:build !js && !plan9
 
-package filelock_test
+package filelock
 
 import (
 	"fmt"
-	"internal/testenv"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"runtime"
 	"testing"
 	"time"
-
-	"cmd/go/internal/lockedfile/internal/filelock"
 )
 
-func lock(t *testing.T, f *os.File) {
+func doLock(t *testing.T, f *os.File) {
 	t.Helper()
-	err := filelock.Lock(f)
+	err := Lock(f)
 	t.Logf("Lock(fd %d) = %v", f.Fd(), err)
 	if err != nil {
 		t.Fail()
 	}
 }
 
-func rLock(t *testing.T, f *os.File) {
+func doRLock(t *testing.T, f *os.File) {
 	t.Helper()
-	err := filelock.RLock(f)
+	err := RLock(f)
 	t.Logf("RLock(fd %d) = %v", f.Fd(), err)
 	if err != nil {
 		t.Fail()
 	}
 }
 
-func unlock(t *testing.T, f *os.File) {
+func doUnlock(t *testing.T, f *os.File) {
 	t.Helper()
-	err := filelock.Unlock(f)
+	err := Unlock(f)
 	t.Logf("Unlock(fd %d) = %v", f.Fd(), err)
 	if err != nil {
 		t.Fail()
@@ -89,9 +86,9 @@ func mustBlock(t *testing.T, op string, f *os.File) (wait func(*testing.T)) {
 		t.Helper()
 		switch op {
 		case "Lock":
-			lock(t, f)
+			doLock(t, f)
 		case "RLock":
-			rLock(t, f)
+			doRLock(t, f)
 		default:
 			panic("invalid op: " + op)
 		}
@@ -125,11 +122,11 @@ func TestLockExcludesLock(t *testing.T) {
 	other := mustOpen(t, f.Name())
 	defer other.Close()
 
-	lock(t, f)
+	doLock(t, f)
 	lockOther := mustBlock(t, "Lock", other)
-	unlock(t, f)
+	doUnlock(t, f)
 	lockOther(t)
-	unlock(t, other)
+	doUnlock(t, other)
 }
 
 func TestLockExcludesRLock(t *testing.T) {
@@ -141,11 +138,11 @@ func TestLockExcludesRLock(t *testing.T) {
 	other := mustOpen(t, f.Name())
 	defer other.Close()
 
-	lock(t, f)
+	doLock(t, f)
 	rLockOther := mustBlock(t, "RLock", other)
-	unlock(t, f)
+	doUnlock(t, f)
 	rLockOther(t)
-	unlock(t, other)
+	doUnlock(t, other)
 }
 
 func TestRLockExcludesOnlyLock(t *testing.T) {
@@ -153,7 +150,7 @@ func TestRLockExcludesOnlyLock(t *testing.T) {
 
 	f, remove := mustTempFile(t)
 	defer remove()
-	rLock(t, f)
+	doRLock(t, f)
 
 	f2 := mustOpen(t, f.Name())
 	defer f2.Close()
@@ -166,10 +163,10 @@ func TestRLockExcludesOnlyLock(t *testing.T) {
 		// first descriptor is closed, the second descriptor would still be open but
 		// silently unlocked. So a second RLock must block instead of proceeding.
 		lockF2 := mustBlock(t, "RLock", f2)
-		unlock(t, f)
+		doUnlock(t, f)
 		lockF2(t)
 	default:
-		rLock(t, f2)
+		doRLock(t, f2)
 		doUnlockTF = true
 	}
 
@@ -177,21 +174,24 @@ func TestRLockExcludesOnlyLock(t *testing.T) {
 	defer other.Close()
 	lockOther := mustBlock(t, "Lock", other)
 
-	unlock(t, f2)
+	doUnlock(t, f2)
 	if doUnlockTF {
-		unlock(t, f)
+		doUnlock(t, f)
 	}
 	lockOther(t)
-	unlock(t, other)
+	doUnlock(t, other)
 }
 
 func TestLockNotDroppedByExecCommand(t *testing.T) {
-	testenv.MustHaveExec(t)
+	switch runtime.GOOS {
+	case "js", "ios":
+		t.Skip("test requires fork/exec")
+	}
 
 	f, remove := mustTempFile(t)
 	defer remove()
 
-	lock(t, f)
+	doLock(t, f)
 
 	other := mustOpen(t, f.Name())
 	defer other.Close()
@@ -205,7 +205,7 @@ func TestLockNotDroppedByExecCommand(t *testing.T) {
 	}
 
 	lockOther := mustBlock(t, "Lock", other)
-	unlock(t, f)
+	doUnlock(t, f)
 	lockOther(t)
-	unlock(t, other)
+	doUnlock(t, other)
 }

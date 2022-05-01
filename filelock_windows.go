@@ -7,21 +7,35 @@
 package filelock
 
 import (
-	"internal/syscall/windows"
 	"io/fs"
 	"syscall"
+	"unsafe"
+)
+
+var (
+	modkernel32      = syscall.NewLazyDLL("kernel32.dll")
+	procLockFileEx   = modkernel32.NewProc("LockFileEx")
+	procUnlockFileEx = modkernel32.NewProc("UnlockFileEx")
+)
+
+const (
+	// https://docs.microsoft.com/en-us/windows/win32/api/fileapi/nf-fileapi-lockfileex#parameters
+	sysLOCKFILE_EXCLUSIVE_LOCK   = 0x00000002
+	sysLOCKFILE_FAIL_IMMEDIATELY = 0x00000001
+
+	// https://docs.microsoft.com/en-us/windows/win32/debug/system-error-codes--0-499-
+	errnoERROR_NOT_SUPPORTED        syscall.Errno = 50
+	errnoERROR_CALL_NOT_IMPLEMENTED syscall.Errno = 120
+
+	reserved = 0
+	allBytes = ^uint32(0)
 )
 
 type lockType uint32
 
 const (
 	readLock  lockType = 0
-	writeLock lockType = windows.LOCKFILE_EXCLUSIVE_LOCK
-)
-
-const (
-	reserved = 0
-	allBytes = ^uint32(0)
+	writeLock lockType = sysLOCKFILE_EXCLUSIVE_LOCK
 )
 
 func lock(f File, lt lockType) error {
@@ -32,8 +46,12 @@ func lock(f File, lt lockType) error {
 	// We want to lock the entire file, so we leave the offset as zero.
 	ol := new(syscall.Overlapped)
 
-	err := windows.LockFileEx(syscall.Handle(f.Fd()), uint32(lt), reserved, allBytes, allBytes, ol)
-	if err != nil {
+	r1, _, err := procLockFileEx.Call(
+		uintptr(syscall.Handle(f.Fd())), uintptr(uint32(lt)),
+		uintptr(reserved), uintptr(allBytes),
+		uintptr(allBytes), uintptr(unsafe.Pointer(ol)),
+	)
+	if r1 == 0 {
 		return &fs.PathError{
 			Op:   lt.String(),
 			Path: f.Name(),
@@ -45,8 +63,11 @@ func lock(f File, lt lockType) error {
 
 func unlock(f File) error {
 	ol := new(syscall.Overlapped)
-	err := windows.UnlockFileEx(syscall.Handle(f.Fd()), reserved, allBytes, allBytes, ol)
-	if err != nil {
+	r1, _, err := procUnlockFileEx.Call(
+		uintptr(syscall.Handle(f.Fd())), uintptr(reserved),
+		uintptr(allBytes), uintptr(allBytes), uintptr(unsafe.Pointer(ol)),
+	)
+	if r1 == 0 {
 		return &fs.PathError{
 			Op:   "Unlock",
 			Path: f.Name(),
@@ -58,7 +79,7 @@ func unlock(f File) error {
 
 func isNotSupported(err error) bool {
 	switch err {
-	case windows.ERROR_NOT_SUPPORTED, windows.ERROR_CALL_NOT_IMPLEMENTED, ErrNotSupported:
+	case errnoERROR_NOT_SUPPORTED, errnoERROR_CALL_NOT_IMPLEMENTED, ErrNotSupported:
 		return true
 	default:
 		return false
