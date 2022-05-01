@@ -43,6 +43,22 @@ func Lock(f File) error {
 	return lock(f, writeLock)
 }
 
+// TryLock attempts to place an advisory write lock on the file if available.
+//
+// If TryLock returns nil, no other process will be able to place a read or
+// write lock on the file until this process exits, closes f, or calls Unlock on
+// it. If there already is a lock on the file, this function returns
+// ErrWouldBlock.
+//
+// If f's descriptor is already read- or write-locked, the behavior of Lock is
+// unspecified.
+//
+// Closing the file may or may not release the lock promptly. Callers should
+// ensure that Unlock is always called when Lock succeeds.
+func TryLock(f File) error {
+	return lock(f, writeLockNB)
+}
+
 // RLock places an advisory read lock on the file, blocking until it can be locked.
 //
 // If RLock returns nil, no other process will be able to place a write lock on
@@ -52,8 +68,32 @@ func Lock(f File) error {
 //
 // Closing the file may or may not release the lock promptly. Callers should
 // ensure that Unlock is always called if RLock succeeds.
+//
+// NOTE: When using POSIX locks (as on Solaris), calling RLock on the same inode
+// from two separate file descriptors, the second call to RLock will behave as
+// if the file is locked. This is a limitation imposed by POSIX compliant
+// Advisory Record Locking, fcntl(2).
 func RLock(f File) error {
 	return lock(f, readLock)
+}
+
+// TryRLock attempts to place an advisory read lock on the file if available.
+//
+// If TryRLock returns nil, no other process will be able to place a write lock
+// on the file until this process exits, closes f, or calls Unlock on it. If the
+// file is already write-locked, this function returns ErrWouldBlock.
+//
+// If f is already read- or write-locked, the behavior of RLock is unspecified.
+//
+// Closing the file may or may not release the lock promptly. Callers should
+// ensure that Unlock is always called if RLock succeeds.
+//
+// NOTE: When using POSIX locks (as on Solaris), calling RLock on the same inode
+// from two separate file descriptors, the second call to RLock will behave as
+// if the file is locked. This is a limitation imposed by POSIX compliant
+// Advisory Record Locking, fcntl(2).
+func TryRLock(f File) error {
+	return lock(f, readLockNB)
 }
 
 // Unlock removes an advisory lock placed on f by this process.
@@ -69,8 +109,12 @@ func (lt lockType) String() string {
 	switch lt {
 	case readLock:
 		return "RLock"
+	case readLockNB:
+		return "TryRLock"
 	case writeLock:
 		return "Lock"
+	case writeLockNB:
+		return "TryLock"
 	default:
 		return "Unlock"
 	}
@@ -83,7 +127,10 @@ func IsNotSupported(err error) bool {
 	return isNotSupported(underlyingError(err))
 }
 
-var ErrNotSupported = errors.New("operation not supported")
+var (
+	ErrNotSupported = errors.New("operation not supported")
+	ErrWouldBlock   = errors.New("filelock would block")
+)
 
 // underlyingError returns the underlying error for known os error types.
 func underlyingError(err error) error {

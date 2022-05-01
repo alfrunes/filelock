@@ -16,6 +16,17 @@ import (
 	"time"
 )
 
+var isPosix bool
+
+func init() {
+	type posixLockType interface {
+		op() int
+		cmd() int16
+	}
+	var lt interface{} = readLock
+	_, isPosix = lt.(posixLockType)
+}
+
 func doLock(t *testing.T, f *os.File) {
 	t.Helper()
 	err := Lock(f)
@@ -156,8 +167,7 @@ func TestRLockExcludesOnlyLock(t *testing.T) {
 	defer f2.Close()
 
 	doUnlockTF := false
-	switch runtime.GOOS {
-	case "aix", "solaris":
+	if isPosix {
 		// When using POSIX locks (as on Solaris), we can't safely read-lock the
 		// same inode through two different descriptors at the same time: when the
 		// first descriptor is closed, the second descriptor would still be open but
@@ -165,7 +175,7 @@ func TestRLockExcludesOnlyLock(t *testing.T) {
 		lockF2 := mustBlock(t, "RLock", f2)
 		doUnlock(t, f)
 		lockF2(t)
-	default:
+	} else {
 		doRLock(t, f2)
 		doUnlockTF = true
 	}

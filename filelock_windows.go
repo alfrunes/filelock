@@ -24,6 +24,7 @@ const (
 	sysLOCKFILE_FAIL_IMMEDIATELY = 0x00000001
 
 	// https://docs.microsoft.com/en-us/windows/win32/debug/system-error-codes--0-499-
+	errnoERROR_LOCK_VIOLATION       syscall.Errno = 33
 	errnoERROR_NOT_SUPPORTED        syscall.Errno = 50
 	errnoERROR_CALL_NOT_IMPLEMENTED syscall.Errno = 120
 
@@ -34,8 +35,10 @@ const (
 type lockType uint32
 
 const (
-	readLock  lockType = 0
-	writeLock lockType = sysLOCKFILE_EXCLUSIVE_LOCK
+	readLock    lockType = 0x00000000
+	readLockNB  lockType = sysLOCKFILE_FAIL_IMMEDIATELY
+	writeLock   lockType = sysLOCKFILE_EXCLUSIVE_LOCK
+	writeLockNB lockType = sysLOCKFILE_EXCLUSIVE_LOCK | sysLOCKFILE_FAIL_IMMEDIATELY
 )
 
 func lock(f File, lt lockType) error {
@@ -52,6 +55,9 @@ func lock(f File, lt lockType) error {
 		uintptr(allBytes), uintptr(unsafe.Pointer(ol)),
 	)
 	if r1 == 0 {
+		if err == errnoERROR_LOCK_VIOLATION || err == syscall.ERROR_IO_PENDING {
+			return ErrWouldBlock
+		}
 		return &fs.PathError{
 			Op:   lt.String(),
 			Path: f.Name(),

@@ -12,7 +12,10 @@ type lockType int8
 
 const (
 	readLock = iota + 1
+	readLockNB
 	writeLock
+	writeLockNB
+	unLock
 )
 
 func lock(f File, lt lockType) error {

@@ -25,12 +25,35 @@ import (
 	"time"
 )
 
-type lockType int16
+type lockType int8
 
 const (
-	readLock  lockType = syscall.F_RDLCK
-	writeLock lockType = syscall.F_WRLCK
+	readLock lockType = iota + 1
+	readLockNB
+	writeLock
+	writeLockNB
+	unLock
 )
+
+func (lt lockType) op() int {
+	switch lt {
+	case readLockNB, writeLockNB:
+		return syscall.F_SETLK
+	default:
+		return syscall.F_SETLKW
+	}
+}
+
+func (lt lockType) cmd() int16 {
+	switch lt {
+	case readLock, readLockNB:
+		return syscall.F_RDLCK
+	case writeLock, writeLockNB:
+		return syscall.F_WRLCK
+	default:
+		return syscall.F_UNLCK
+	}
+}
 
 type inode = uint64 // type of syscall.Stat_t.Ino
 
@@ -64,7 +87,7 @@ func lock(f File, lt lockType) (err error) {
 		return &fs.PathError{
 			Op:   lt.String(),
 			Path: f.Name(),
-			Err:  errors.New("inode for file changed since last Lock or RLock"),
+			Err:  errors.New("inode for file changed since last lock operation"),
 		}
 	}
 	inodes[f] = ino
@@ -77,7 +100,11 @@ func lock(f File, lt lockType) (err error) {
 		// No owner: it's ours now.
 		l.owner = f
 	} else {
-		// Already owned: add a channel to wait on.
+		// Already owned: handle as if it would block.
+		if lt.op() == syscall.F_SETLK {
+			mu.Unlock()
+			return ErrWouldBlock
+		}
 		wait = make(chan File)
 		l.queue = append(l.queue, wait)
 	}
@@ -136,7 +163,7 @@ func lock(f File, lt lockType) (err error) {
 	nextSleep := 1 * time.Millisecond
 	const maxSleep = 500 * time.Millisecond
 	for {
-		err = setlkw(f.Fd(), lt)
+		err = fcntlk(f.Fd(), lt)
 		if err != syscall.EDEADLK {
 			break
 		}
@@ -151,6 +178,11 @@ func lock(f File, lt lockType) (err error) {
 	}
 
 	if err != nil {
+		if lt.op() == syscall.F_SETLK {
+			if err == syscall.EACCES || err == syscall.EAGAIN {
+				return ErrWouldBlock
+			}
+		}
 		unlock(f)
 		return &fs.PathError{
 			Op:   lt.String(),
@@ -176,7 +208,7 @@ func unlock(f File) error {
 		panic("unlock called on a file that is not locked")
 	}
 
-	err := setlkw(f.Fd(), syscall.F_UNLCK)
+	err := fcntlk(f.Fd(), unLock)
 
 	mu.Lock()
 	l := locks[ino]
@@ -196,11 +228,11 @@ func unlock(f File) error {
 	return err
 }
 
-// setlkw calls FcntlFlock with F_SETLKW for the entire file indicated by fd.
-func setlkw(fd uintptr, lt lockType) error {
+// fcntlk calls FcntlFlock with F_SETLK[W] for the entire file indicated by fd.
+func fcntlk(fd uintptr, lt lockType) error {
 	for {
-		err := syscall.FcntlFlock(fd, syscall.F_SETLKW, &syscall.Flock_t{
-			Type:   int16(lt),
+		err := syscall.FcntlFlock(fd, lt.op(), &syscall.Flock_t{
+			Type:   lt.cmd(),
 			Whence: io.SeekStart,
 			Start:  0,
 			Len:    0, // All bytes.
