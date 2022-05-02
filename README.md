@@ -1,5 +1,7 @@
 # filelock
 
+[![Go Reference](https://pkg.go.dev/badge/github.com/alfrunes/filelock.svg)](https://pkg.go.dev/github.com/alfrunes/filelock)
+
 This package is a fork of the internal package
 "cmd/go/internal/lockedfile/internal/filelock" providing an advisory file
 locking interface. The package attempts to expose filelocks as an interface
