@@ -55,8 +55,10 @@ func lock(f File, lt lockType) error {
 		uintptr(allBytes), uintptr(unsafe.Pointer(ol)),
 	)
 	if r1 == 0 {
-		if err == errnoERROR_LOCK_VIOLATION || err == syscall.ERROR_IO_PENDING {
-			return ErrWouldBlock
+		if (lt & sysLOCKFILE_FAIL_IMMEDIATELY) > 0 {
+			if err == errnoERROR_LOCK_VIOLATION || err == syscall.ERROR_IO_PENDING {
+				return ErrWouldBlock
+			}
 		}
 		return &fs.PathError{
 			Op:   lt.String(),
